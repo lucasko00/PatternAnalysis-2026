@@ -10,8 +10,10 @@ from modules import ImprovedUNet2D, UNet2D
 LABELS = ["background", "body", "bone", "bladder", "rectum", "prostate"]
 MODELS = {"improved": ImprovedUNet2D, "baseline": UNet2D}
 BATCH_SIZE = 16
-N_EPOCHS = 50
+EPOCHS = 50
 LR = 5e-4
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def dice_ce_loss(logits, masks):
     ce = F.cross_entropy(logits, masks)
@@ -20,5 +22,112 @@ def dice_ce_loss(logits, masks):
     inter = (probs * one_hot).sum(dim=(0, 2, 3))
     total = probs.sum(dim=(0, 2, 3)) + one_hot.sum(dim=(0, 2, 3))
     return ce + 1 - ((2 * inter + 1) / (total + 1)).mean()
-s
 
+def dice_iou(preds, truth):
+    """Per-class Dice and IoU, with overlaps summed over the whole split."""
+    dice, iou = [], []
+    for c in range(NUM_CLASSES):
+        p, t = preds == c, truth == c
+        inter, p_sum, t_sum = (p & t).sum().item(), p.sum().item(), t.sum().item()
+        dice.append(2 * inter / max(p_sum + t_sum, 1))
+        iou.append(inter / max(p_sum + t_sum - inter, 1))
+    return dice, iou
+
+def edges(mask):
+    m = mask.float().unsqueeze(1)
+    eroded = -F.max_pool2d(-m, 3, stride=1, padding=1)
+    return (m - eroded).squeeze(1) > 0
+
+
+def boundary_f1(preds, truth, label=["background", "body", "bone", "bladder", "rectum", "prostate"], tol=2):
+    pred_edge, true_edge = edges(preds == label), edges(truth == label)
+    k = 2 * tol + 1
+    near_true = F.max_pool2d(true_edge.float().unsqueeze(1), k, 1, tol).squeeze(1) > 0
+    near_pred = F.max_pool2d(pred_edge.float().unsqueeze(1), k, 1, tol).squeeze(1) > 0
+    precision = (pred_edge & near_true).sum().item() / max(pred_edge.sum().item(), 1)
+    recall = (true_edge & near_pred).sum().item() / max(true_edge.sum().item(), 1)
+    return 2 * precision * recall / max(precision + recall, 1e-8)
+
+
+@torch.no_grad()
+def predict_all(model, loader):
+    """mean loss and the ms per slice."""
+    model.eval()
+    preds, total_loss, total_time = [], 0.0, 0.0
+    for images, masks in loader:
+        images, masks = images.to(device), masks.to(device)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        start = time.perf_counter()
+        logits = model(images)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        total_time += time.perf_counter() - start
+        total_loss += dice_ce_loss(logits, masks).item() * len(images)
+        preds.append(logits.argmax(dim=1).cpu())
+    n = len(loader.dataset)
+    return torch.cat(preds), total_loss / n, 1000 * total_time / n
+ 
+
+def train(name, model, train_loader, val_loader):
+    model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    val_truth = torch.from_numpy(val_loader.dataset.masks).long()
+    path = os.path.join("outputs", f"{name}_best.pt")
+    history = {"train_loss": [], "val_loss": [], "val_prostate_dice": []}
+    best = -1.0
+ 
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    start = time.time()
+ 
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        total_loss = 0.0
+        for images, masks in train_loader:
+            images, masks = images.to(device), masks.to(device)
+            optimizer.zero_grad()
+            loss = dice_ce_loss(model(images), masks)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * len(images)
+ 
+        val_preds, val_loss, _ = predict_all(model, val_loader)
+        val_dice = dice_iou(val_preds, val_truth)[0][5]
+        history["train_loss"].append(total_loss / len(train_loader.dataset))
+        history["val_loss"].append(val_loss)
+        history["val_prostate_dice"].append(val_dice)
+ 
+        if val_dice > best:   
+            best = val_dice
+            torch.save(model.state_dict(), path)
+        print(f"[{name}] epoch {epoch:3d}/{EPOCHS}  train_loss={history['train_loss'][-1]:.4f}  "
+              f"val_loss={val_loss:.4f}  val_prostate_dice={val_dice:.4f}")
+ 
+    peak_vram = torch.cuda.max_memory_allocated() / 1024 ** 3 if device.type == "cuda" else 0.0
+    minutes = (time.time() - start) / 60
+    model.load_state_dict(torch.load(path, map_location=device))
+    return history, peak_vram, minutes
+
+
+def main():
+    torch.manual_seed(35)
+    os.makedirs("outputs", exist_ok=True)
+    print("Using device:", device)
+    train_loader, val_loader, test_loader = get_dataloaders(HIPMRI_ROOT, BATCH_SIZE, early_stop=False)
+    test_images = test_loader.dataset.images
+    test_truth = torch.from_numpy(test_loader.dataset.masks).long()
+    models = {
+        "baseline": UNet2D(in_channels=1, num_classes=6),
+        "improved": ImprovedUNet2D(in_channels=1, num_classes=6),
+    }
+    histories, results = {}, {}
+    for name, model in models.items():
+        histories[name], vram, minutes = train(name, model, train_loader, val_loader)
+        preds, _, ms = predict_all(model, test_loader)
+        dice, iou = dice_iou(preds, test_truth)
+        results[name] = {
+            "dice": dice, "iou": iou, "boundary_f1": boundary_f1(preds, test_truth),
+            "params": sum(p.numel() for p in model.parameters()),
+            "vram": vram, "minutes": minutes, "ms": ms,
+        }
