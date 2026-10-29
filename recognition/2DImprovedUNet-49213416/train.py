@@ -20,5 +20,5 @@ def dice_ce_loss(logits, masks):
     inter = (probs * one_hot).sum(dim=(0, 2, 3))
     total = probs.sum(dim=(0, 2, 3)) + one_hot.sum(dim=(0, 2, 3))
     return ce + 1 - ((2 * inter + 1) / (total + 1)).mean()
-
+s
 
