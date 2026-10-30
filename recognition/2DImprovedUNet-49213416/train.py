@@ -1,14 +1,13 @@
-import argparse
 import os
 import time
 import torch
+import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from dataset import get_dataloaders, HIPMRI_ROOT, NUM_CLASSES
 from modules import ImprovedUNet2D, UNet2D
 
 
 LABELS = ["background", "body", "bone", "bladder", "rectum", "prostate"]
-MODELS = {"improved": ImprovedUNet2D, "baseline": UNet2D}
 BATCH_SIZE = 16
 EPOCHS = 50
 LR = 5e-4
@@ -39,7 +38,7 @@ def edges(mask):
     return (m - eroded).squeeze(1) > 0
 
 
-def boundary_f1(preds, truth, label=["background", "body", "bone", "bladder", "rectum", "prostate"], tol=2):
+def boundary_f1(preds, truth, label=5, tol=2):
     pred_edge, true_edge = edges(preds == label), edges(truth == label)
     k = 2 * tol + 1
     near_true = F.max_pool2d(true_edge.float().unsqueeze(1), k, 1, tol).squeeze(1) > 0
@@ -109,7 +108,38 @@ def train(name, model, train_loader, val_loader):
     model.load_state_dict(torch.load(path, map_location=device))
     return history, peak_vram, minutes
 
+def plot_curves(histories):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    for name, h in histories.items():
+        epochs = range(1, len(h["train_loss"]) + 1)
+        ax1.plot(epochs, h["train_loss"], label=f"{name} train")
+        ax1.plot(epochs, h["val_loss"], "--", label=f"{name} validation")
+        ax2.plot(epochs, h["val_prostate_dice"], label=name)
+    ax2.axhline(0.75, color="grey", linestyle=":", label="target 0.75")
+    ax1.set(xlabel="Epoch", ylabel="Dice + CE loss", title="Loss")
+    ax2.set(xlabel="Epoch", ylabel="Dice", title="Validation prostate Dice", ylim=(0, 1))
+    ax1.legend()
+    ax2.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join("outputs", "training_curves.png"), dpi=150)
+    plt.close(fig)
 
+def print_results(results):
+    """Markdown tables, ready to paste into the README."""
+    names = list(results)
+    print("\n| Label | " + " | ".join(f"{n} Dice | {n} IoU" for n in names) + " |")
+    print("|---|" + "---|---|" * len(names))
+    for c in range(NUM_CLASSES):
+        cells = " | ".join(f"{results[n]['dice'][c]:.4f} | {results[n]['iou'][c]:.4f}" for n in names)
+        print(f"| {LABELS[c]} | {cells} |")
+ 
+    print("\n| Model | Prostate boundary F1 (2 px) | Parameters | Peak VRAM (GB) | Train time (min) | Inference (ms/slice) |")
+    print("|---|---|---|---|---|---|")
+    for n in names:
+        r = results[n]
+        print(f"| {n} | {r['boundary_f1']:.4f} | {r['params']:,} | {r['vram']:.2f} | "
+              f"{r['minutes']:.1f} | {r['ms']:.2f} |")
+        
 def main():
     torch.manual_seed(35)
     os.makedirs("outputs", exist_ok=True)
@@ -131,3 +161,8 @@ def main():
             "params": sum(p.numel() for p in model.parameters()),
             "vram": vram, "minutes": minutes, "ms": ms,
         }
+    plot_curves(histories)
+    print_results(results)
+
+if __name__ == "__main__":
+    main()
