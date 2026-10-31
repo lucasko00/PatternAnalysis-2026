@@ -21,7 +21,6 @@ for name, model_class in [("baseline", UNet2D), ("improved", ImprovedUNet2D)]:
         torch.cuda.synchronize()
     start = time.time()
  
-    # One epoch, the same steps as train.py: training pass, then validation pass
     model.train()
     for images, masks in train_loader:
         images, masks = images.to(device), masks.to(device)

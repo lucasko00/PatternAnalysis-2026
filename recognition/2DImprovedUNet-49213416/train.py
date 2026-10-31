@@ -15,6 +15,7 @@ LR = 5e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def dice_ce_loss(logits, masks):
+    """Cross-entropy + soft Dice."""
     ce = F.cross_entropy(logits, masks)
     probs = logits.softmax(dim=1)
     one_hot = F.one_hot(masks, NUM_CLASSES).permute(0, 3, 1, 2).float()   # (B, 6, H, W)
@@ -39,6 +40,7 @@ def edges(mask):
 
 
 def boundary_f1(preds, truth, label=5, tol=2):
+    """Boundary precision for one label."""
     pred_edge, true_edge = edges(preds == label), edges(truth == label)
     k = 2 * tol + 1
     near_true = F.max_pool2d(true_edge.float().unsqueeze(1), k, 1, tol).squeeze(1) > 0
@@ -108,6 +110,44 @@ def train(name, model, train_loader, val_loader):
     model.load_state_dict(torch.load(path, map_location=device))
     return history, peak_vram, minutes
 
+def plot_failures(name, images, truth, preds, n=4):
+    """Worst test slices by prostate Dice: input | truth | prediction | errors."""
+    p, t = preds == 5, truth == 5
+    inter = (p & t).flatten(1).sum(1).float()
+    slice_dice = 2 * inter / (p.flatten(1).sum(1) + t.flatten(1).sum(1)).clamp(min=1)
+    relevant = (p | t).flatten(1).any(1)       
+    slice_dice[~relevant] = 2.0             
+    n = min(n, int(relevant.sum()))
+    if n == 0:
+        return
+    worst = slice_dice.argsort()[:n]
+ 
+    fig, axes = plt.subplots(n, 4, figsize=(10, 4.5 * n), squeeze=False)
+    for row, i in enumerate(worst.tolist()):
+        fp, fn = p[i] & ~t[i], t[i] & ~p[i]
+        errors = torch.zeros(*fp.shape, 4)
+        errors[fp] = torch.tensor([1.0, 0.0, 0.0, 0.8])   # false positive: red
+        errors[fn] = torch.tensor([0.0, 0.4, 1.0, 0.8])   # false negative: blue
+ 
+        ax = axes[row]
+        ax[0].imshow(images[i], cmap="gray")
+        ax[1].imshow(truth[i], cmap="viridis", vmin=0, vmax=5, interpolation="nearest")
+        ax[2].imshow(preds[i], cmap="viridis", vmin=0, vmax=5, interpolation="nearest")
+        ax[3].imshow(images[i], cmap="gray")
+        ax[3].imshow(errors.numpy(), interpolation="nearest")
+        ax[0].set_title(f"Input (test slice {i})")
+        ax[1].set_title("Ground truth")
+        ax[2].set_title("Prediction")
+        ax[3].set_title(f"Prostate errors, Dice {slice_dice[i]:.2f}\nred = FP, blue = FN")
+        for a in ax:
+            a.axis("off")
+    fig.suptitle(f"{name}: worst test slices for prostate")
+    fig.tight_layout()
+    fig.savefig(os.path.join("outputs", f"{name}_failures.png"), dpi=150)
+    plt.close(fig)
+ 
+
+ 
 def plot_curves(histories):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     for name, h in histories.items():
@@ -161,6 +201,7 @@ def main():
             "params": sum(p.numel() for p in model.parameters()),
             "vram": vram, "minutes": minutes, "ms": ms,
         }
+        plot_failures(name, test_images, test_truth, preds)
     plot_curves(histories)
     print_results(results)
 

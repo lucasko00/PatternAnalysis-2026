@@ -1,6 +1,6 @@
 # 1. Problem and The Algorithm
 
-This project addresses task 2.2 which revolves around external-beam radiotherapy for prostate cancer depending on accurate contours of prostate and organs at risk around it. If a contour is too small, tumours may be missed. Drawing these contours by hand on every MRI slice is too slow so this project builds an annotation assistant by proposing a draft segmentation for a clinicians to review and correct. The model is a 2D improved U-Net(Isensee et al., 2018), trained on 2D slices from the HipMRI study to label every pixel as one of six classes: background, body, bone, bladder, rectum or prostate. Segmenting the prostate is difficult because it occupies less than 2% of a pelvic scan and its edges, especially at the base and apex, have low contrast against neighbouring tissue.This model is compared with the standard 2D U-Net on the same data.
+This project addresses task 2.2 which revolves around external-beam radiotherapy for prostate cancer depending on accurate contours of the prostate and organs at risk around it. If a contour is too small, tumours may be missed. Drawing these contours by hand on every MRI slice is too slow so this project builds an annotation assistant by proposing a draft segmentation for a clinicians to review and correct. The model is a 2D improved U-Net(Isensee et al., 2018), trained on 2D slices from the HipMRI study to label every pixel as one of six classes: background, body, bone, bladder, rectum or prostate. Segmenting the prostate is difficult because it occupies less than 2% of a pelvic scan and its edges, especially at the base and apex, have low contrast against neighbouring tissue.This model is compared with the standard 2D U-Net on the same data.
 
 The ImprovedUNet2D is an encoder-decoder with skip connections. The encoder has five levels with 16, 32, 64, 128 and 256 feature channels and the first level works at full 258x128 resolution where each level below starts with a stride-2 convolution that halves the image size and doubles the channels down to 16×8. Every level then applies a context block which contains two convolutions with instance normalization, leaky ReLU and the decoder upsamples the feature to full size. At each level, the matching encoder features concatenates and merges with a localization block, a 3x3 convolution followed by a 1x1 convolution. For deep supervision, 1×1 segmentation and full resolution are each resized to full resolution and summed into the final output. This gives the lower decoder levels a direct training signal. The output has 6 channels and each pixel takes the class with the highest score. Both models are trained with cross-entropy plus soft Dice loss.
 
@@ -10,53 +10,64 @@ The baseline UNet2D uses the same five levels and channel width. Each level is a
 
 # 2. Feasibility Review
 
-Intended users:
+## Intended users
+
 The intended user is a radiology oncology staff contouring prostate and organs at risk for radiotherapy planning. The purpose of this prototype is to draft 2D contours for an expert to review and correct. A high global Dice can hide boundary failures at the prostate base/apex and leakage into the rectum or bladder. This prototype tests whether the Improved U-Net's multi-scale design reduces those failures compared with a plain 2D U-Net, or only improves the easy central slices.
 
-Acceptance Criteria:
+## Acceptance Criteria
 
 1. Prostate dice ≥ 0.75 across all test set
 2. Boundary quality reported per class should be better than or equal to the baseline
 3. Inference ≤ 50 ms per slice; peak training VRAM ≤ 8 GB
 4. Organs at risk Dice ≥ 0.8
 
-Model Choice & Course Concepts
+## Model Choice & Course Concepts
+
 The data used will be the HipMRI 2D slices dataset containg training/validation/test and 11,460/660/540, with no patient overlap. The choice of model will be the 2D improved U-net model with residual context modules, instance norm, leaky ReLU, localisation modules and deep supervision will be used. This model will be compared with baseline the standard 2D U-net that will be trained on the same dataset. Course concepts used will be dice plus entropy-loss, residual learning, normalization, and encoders-decoders.
 
-Feasibility Evidence:
+## Feasibility Evidence
+
 The baseline 2D U-Net was trained for 5 epochs on the full training set on an NVIDIA RTX 3070 Laptop GPU (8 GB). Training Loss fell from 0.92 to 0.12 and prostate Dice reached 0.85 by epoch 5 which is is above the 0.75 target. On the other hand, the 2D Improved U-Net reached 0.77 validation prostate Dice after a single epoch.
 
-Technical Risks:
+## Technical Risks
 
 1. Limited GPU memory (8 GB laptop)
 2. Image–mask misalignment
 3. Class imbalance: prostate is < 2% of pixels
 4. Patient leakage between splits
 
-Compute Budget:
+## Compute Budget
+
 Training runs on an NVIDIA RTX 3070 Laptop GPU (8 GB). Rangpur is the backup if the laptop is unavailable or too slow.
 
-Next planned experiment:
+## Next planned experiment
+
 Train the baseline 2D U-Net and the 2D Improved U-Net for 50 epochs each with identical splits, loss, optimiser (Adam, lr 5e-4) and seed. Then compare test per-class Dice and IoU, prostate boundary F1, and apex / mid / base Dice, and inspect 3–5 boundary failure cases.
 
-Fallback:
+## Fallback
+
 If the Improved U-Net doesn't reach 0.75 prostate Dice, tune the loss weighting and learning rate or crop to the pelvic region of interest.
 
 # 3. Dependencies
 
-| Package                     | Used for                                                      |
-| --------------------------- | ------------------------------------------------------------- |
-| Python                      | dataset.py, modules.py, train.py, predict.py                  |
-| PyTorch                     | models, training, inference                                   |
-| CUDA (bundled with PyTorch) | GPU training                                                  |
-| NumPy                       | data loading (dataset.py) and plotting only, not in the model |
-| nibabel                     | reading NIfTI (.nii.gz) slices                                |
-| matplotlib                  | training curves and prediction figures                        |
-| tqdm                        | progress bars while loading data                              |
+| Package    | Used for                                                      |
+| ---------- | ------------------------------------------------------------- |
+| Python     | dataset.py, modules.py, train.py, predict.py                  |
+| PyTorch    | models, training, inference                                   |
+| NumPy      | data loading (dataset.py) and plotting only, not in the model |
+| nibabel    | reading NIfTI (.nii.gz) slices                                |
+| matplotlib | training curves and prediction figures                        |
+| tqdm       | progress bars while loading data                              |
+
+Installation:
+conda create -n comp3710 python=3.11 -y
+conda activate comp3710
+pip install torch numpy nibabel matplotlib tqdm
 
 # 4. Dataset and Pre-Processing Used
 
-Dataset:
+## 4.1 Dataset
+
 This project uses the 2D slice version of the HipMRI Study prostate dataset. It is provided on the Rangpur cluster at /home/groups/comp3710/HipMRI*Study_open/keras_slices_data. Files are named case*<patient>_week_<week>_slice_<slice>.nii.gz, and each mask has the same name with seg* in place of case*. Patients were scanned in several weeks and each scan contributes to many consecutive slices.
 
 | Split      | Slices | Slice size                     |
@@ -74,7 +85,7 @@ for folder in ['keras_slices_train', 'keras_slices_validate', 'keras_slices_test
 print(folder, Counter(nib.load(i).shape for i in glob.glob(folder + '/_.nii_')))
 "
 
-Preprocessing for both models:
+## 4.2 Preprocessing For Both Models
 
 1. Loading. Slices are read with nibabel using the load_data_2D and to_channels functions from Appendix B of the course specification.
 2. Fixed size. 11,400 training slices and all validation and test slices are 256x128. The 60 trainign 256*144 are center cropped to 256*128 by removing 8 columns from each side. The mask gets exactly the same crop. Masks are loaded with the same load_data_2D function, and each wide image has a wide mask.
@@ -188,4 +199,21 @@ Recommendation: use the baseline 2D U-Net since the extra cost of the Improved 2
 | Training memory and time(NVIDIA GeForce RTX 3070 Laptop GPU (8 GB)) | 0.74 GB, ~29 min | 1.44 GB, ~80 min |
 | Inference speed | 1.62 ms/slice | < 1..49 ms/slice |
 
-# Artificial Intelligence Usage Disclosure
+# 7. Artificial Intelligence Usage Disclosure
+
+**Tools used**
+I used Claude(Anthropic)
+**What It helped with**
+I used AI throughout this project, as a coding assistant and report-drafting tool. I used it to understand the assignment, the HipMRI data and the Improved U-Net architecture, and it scaffolded the code in dataset.py, train.py, predict.py and profile_models.py, which I then reviewed, adapted, and debugged with its help. I also used it to set up my environment to interpret my training log, results tables and failure-case figures, and to draft some sections of this README from my code and results. The experiments themselves were run by me on my own machine and every number, table and result figure in this report comes from those runs. I checked the AI's code by running it on the real data and checked the report's numbers against my outputs.
+
+**How I checked and verified it**
+
+- I ran a shape check on every image and mask file on Rangpur. It showed that 11,400 training slices are 256×128 and 60 are 256×144, that all validation and test slices are 256×128, and that the mask folders have identical counts, so each image and its mask receive the same crop.
+  -Checked the file naming so that every image is paired with its own mask.
+- Checked the code against the specification, for example whether the visualisations show input, ground truth, prediction and false-positive/false-negative overlays, and whether the failure analysis covers base and apex slices, and had missing parts added
+  -Ran every script on the real data on my own GPU. This surfaced errors in the suggested and merged code.
+  -Read the training log and curves for signs of a problem: both losses fall, validation loss levels off rather than rising, and validation Dice is stable above the target
+
+# 8. References
+
+[1] F. Isensee, P. Kickingereder, W. Wick, M. Bendszus, and K. H. Maier-Hein, “Brain Tumor Segmentation and Radiomics Survival Prediction: Contribution to the BRATS 2017 Challenge,” Brainlesion: Glioma, Multiple Sclerosis, Stroke and Traumatic Brain Injuries, pp. 287–297, 2018. DOI: 10.1007/978-3-319-75238-9_25.

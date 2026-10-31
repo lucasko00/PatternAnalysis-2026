@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-<<<<<<< HEAD
-=======
 """ Baseline: standard 2D U-net """
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
@@ -43,7 +41,7 @@ class UNet2D(nn.Module):
         self.dec3 = UpSample(128, 64)
         self.dec2 = UpSample(64, 32)
         self.dec1 = UpSample(32, 16)
-        self.head = UpSample.Conv2d(16, num_classes, kernel_size=1)
+        self.head = nn.Conv2d(16, num_classes, kernel_size=1)
 
     def forward(self, x):
         e1 = self.enc1(x)
@@ -59,7 +57,6 @@ class UNet2D(nn.Module):
         return self.head(d)
     
 
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
 def conv(in_ch, out_ch, kernel_size=3, stride=1):
     return nn.Sequential(
         nn.Conv2d(in_ch, out_ch, kernel_size, stride=stride, padding=kernel_size // 2),
@@ -67,48 +64,31 @@ def conv(in_ch, out_ch, kernel_size=3, stride=1):
         nn.LeakyReLU(0.01, inplace=True),
     )
 
-<<<<<<< HEAD
-class ContextBlock(nn.Module):
- 
-    def __init__(self, channels, dropout=0.3):
-        super().__init__
-=======
 
 class ContextBlock(nn.Module):
  
     def __init__(self, channels, dropout=0.3):
         super().__init__()
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
         self.block = nn.Sequential(conv(channels,channels), nn.Dropout2d(dropout), conv(channels,channels))
  
     def forward(self, x):
         return x + self.block(x)
 
-<<<<<<< HEAD
-class UpSample(nn.Module):
-=======
 
 class ImprovedUpSample(nn.Module):
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
     def __init__(self, in_ch, out_ch):
         super().__init__()
         self.up = conv(in_ch, out_ch)
         self.localize = nn.Sequential(conv(out_ch * 2, out_ch * 2), conv(out_ch * 2, out_ch, kernel_size=1))
 
-<<<<<<< HEAD
-=======
 
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
     def forward(self, x, skip):
         x = F.interpolate(x, size=skip.shape[2:], mode="nearest")  
         x = self.up(x)
         return self.localize(torch.cat([skip, x], dim=1))
 
 
-<<<<<<< HEAD
-=======
 
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
 class ImprovedUNet2D(nn.Module):
     def __init__(self, in_channels=1, num_classes=6):
         super().__init__()
@@ -118,28 +98,18 @@ class ImprovedUNet2D(nn.Module):
         self.enc4 = nn.Sequential(conv(64, 128, stride=2), ContextBlock(128))
         self.bottom = nn.Sequential(conv(128, 256, stride=2), ContextBlock(256))
 
-<<<<<<< HEAD
-        self.dec4 = UpSample(256, 128)
-        self.dec3 = UpSample(128, 64)
-        self.dec2 = UpSample(64, 32)
-        self.dec1 = UpSample(32, 16)
-=======
 
         self.dec4 = ImprovedUpSample(256, 128)
         self.dec3 = ImprovedUpSample(128, 64)
         self.dec2 = ImprovedUpSample(64, 32)
         self.dec1 = ImprovedUpSample(32, 16)
 
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
 
         self.head3 = nn.Conv2d(64, num_classes, kernel_size=1)
         self.head2 = nn.Conv2d(32, num_classes, kernel_size=1)
         self.head1 = nn.Conv2d(16, num_classes, kernel_size=1)
 
-<<<<<<< HEAD
-=======
 
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
     def forward(self, x):
         size = x.shape[2:]
         e1 = self.enc1(x)
@@ -153,15 +123,8 @@ class ImprovedUNet2D(nn.Module):
         d2 = self.dec2(d3, e2)
         d1 = self.dec1(d2, e1)
 
-<<<<<<< HEAD
-        out = F.interpolate(self.head3(d3), size=size, mode="nearest")
-        out = out + F.interpolate(self.head2(d2), size=size, mode="nearest")
-        out = out + self.head1(d1)
-        return out
-=======
 
         out = F.interpolate(self.head3(d3), size=size, mode="nearest")
         out = out + F.interpolate(self.head2(d2), size=size, mode="nearest")
         out = out + self.head1(d1)
         return out
->>>>>>> de17f1afa1b47f1dcb3e72c146494b7da116e2f9
