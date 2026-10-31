@@ -42,6 +42,70 @@ Train the baseline 2D U-Net and the 2D Improved U-Net for 50 epochs each with id
 Fallback:
 If the Improved U-Net doesn't reach 0.75 prostate Dice, tune the loss weighting and learning rate or crop to the pelvic region of interest.
 
-# 3.
+# 3. Dependencies
+
+| Package                     | Used for                                                      |
+| --------------------------- | ------------------------------------------------------------- |
+| Python                      | dataset.py, modules.py, train.py, predict.py                  |
+| PyTorch                     | models, training, inference                                   |
+| CUDA (bundled with PyTorch) | GPU training                                                  |
+| NumPy                       | data loading (dataset.py) and plotting only, not in the model |
+| nibabel                     | reading NIfTI (.nii.gz) slices                                |
+| matplotlib                  | training curves and prediction figures                        |
+| tqdm                        | progress bars while loading data                              |
+
+# 4. Dataset and Pre-processing Used
+
+Dataset:
+This project uses the 2D slice version of the HipMRI Study prostate dataset. It is provided on the Rangpur cluster at /home/groups/comp3710/HipMRI*Study_open/keras_slices_data. Files are named case*<patient>_week_<week>_slice_<slice>.nii.gz, and each mask has the same name with seg* in place of case*. Patients were scanned in several weeks and each scan contributes to many consecutive slices.
+
+| Split      | Slices | Slice size                     |
+| ---------- | ------ | ------------------------------ |
+| Train      | 11,460 | 11,400 × 256×128, 60 × 256×144 |
+| Validation | 660    | 256×128                        |
+| Test       | 540    | 256×128                        |
+
+These numbers were retrieved from a data audit through the use of the following code:
+
+python3 -c "
+import glob, nibabel as nib
+from collections import Counter
+for folder in ['keras_slices_train', 'keras_slices_validate', 'keras_slices_test']:
+print(folder, Counter(nib.load(i).shape for i in glob.glob(folder + '/_.nii_')))
+"
+
+Preprocessing for both models:
+
+1. Loading. Slices are read with nibabel using the load_data_2D and to_channels functions from Appendix B of the course specification.
+2. Fixed size. 11,400 training slices and all validation and test slices are 256x128. The 60 trainign 256*144 are center cropped to 256*128 by removing 8 columns from each side. The mask gets exactly the same crop. Masks are loaded with the same load_data_2D function, and each wide image has a wide mask.
+3. Intensity. Each slice is z-score normalized.
+4. Labels. Masks are stored as integer class labeled 0-5. These labels represent ("background", "body", "bone", "bladder", "rectum", "prostate"). They are one-hot encoded into 6 channels.
+5. Augmentation. A left-right flip applied to both image and mask and a random brightness and contrast change applied to the image only with both a probability of 0.5. Validation and test slices are not augmented.
+
+# 5. Training Setup
+
+Both models are trained by train.py in one run, using the same loaders and settings. The architecture is the only difference.
+| Setting | Value |
+|---|---|
+| Loss | Cross-entropy + soft Dice|
+| Optimiser | Adam, learning rate 5×10⁻⁴, weight decay 1×10⁻⁵ |
+| Batch size | 16 slices |
+| Epochs | 50 per model |
+| Random seed | 35 (`torch.manual_seed`) |
+| Checkpoint selection | Epoch with the highest validation prostate Dice |
+| Hardware | NVIDIA GeForce RTX 3070 Laptop GPU (8 GB) |
+
+Optimiser. The learning rate of 5×10⁻⁴ and weight decay of 1×10⁻⁵ follow the settings used by Isensee et al. (2018) for the original Improved U-Net. The same values were then applied to the baseline model.
+
+Checkpointing. After every epoch the model predicts the whole validation set, and the validation loss and prostate Dice are recorded. Once the validation prostate Dice beats the best one, the weights are saved to output/<model>\_best.pt. After training, the best weights are reloaded and used for all test results, so later epochs that overfit cannot make the reported model worse.
+
+![Training Curves](outputs/training_curves.png)
+Training Curves. Both models learn most of what they will learn in the first 5 epochs. For the baseline model, training loss drops from 0.9 to about 0.14 by epoch 5, then falls slowly to about 0.08 by epoch 50. For the improved model, training loss drops from 0.4 to about 0.15 by epoch 5, then falls slowly to about 0.07 by epoch 50.
+
+Target Dice. The validation prostate Dice is above 0.75 from the first epoch and settles around 0.82 to 0.85 for both models. The improved U-Net starts lower with around 0.78 at epoch 1 and catches up around epoch 6.
+
+Training length. Since neither model improved significantly after 10 epochs, 50 epochs were more than needed since 20 epochs would've given the same result.
+
+6.  Results
 
 # Artificial Intelligence Usage Disclosure
